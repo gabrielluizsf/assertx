@@ -1,8 +1,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dirent.h>
-#include <sys/stat.h>
+
+#ifdef _WIN32
+    #include <windows.h>
+    #include <direct.h>
+    #define mkdir(path, mode) _mkdir(path)
+    #define PATH_SEP "\\"
+#else
+    #include <dirent.h>
+    #include <sys/stat.h>
+    #define PATH_SEP "/"
+#endif
 
 #define BUILD_DIR "build"
 #define COMPILER "gcc"
@@ -24,17 +33,18 @@ int ends_with(const char *str, const char *suffix)
 
 void ensure_build_dir()
 {
+#ifdef _WIN32
+    _mkdir(BUILD_DIR);
+#else
     struct stat st = {0};
     if (stat(BUILD_DIR, &st) == -1)
-    {
         mkdir(BUILD_DIR, 0700);
-    }
+#endif
 }
 
 /*
- * Extracts functions of the form:
- * - void test_function_name()
- * and writes the prototypes to the runner.
+ * Extracts functions:
+ * void test_xxx()
  */
 int extract_test_functions(const char *source_path, FILE *runner_file, char functions[][256])
 {
@@ -68,12 +78,164 @@ int extract_test_functions(const char *source_path, FILE *runner_file, char func
     return count;
 }
 
+void run_test_file(const char *dir_path, const char *filename,
+                   int *total, int *passed)
+{
+    if (!ends_with(filename, "_test.c"))
+        return;
+
+    (*total)++;
+
+    char source_path[512];
+    char binary_path[512];
+    char runner_path[512];
+
+    snprintf(source_path, sizeof(source_path),
+             "%s%s%s", dir_path, PATH_SEP, filename);
+
+    char test_name[256];
+    size_t name_len = strlen(filename);
+
+    if (name_len < 3)
+        return;
+
+    memcpy(test_name, filename, name_len - 2);
+    test_name[name_len - 2] = '\0';
+
+#ifdef _WIN32
+    snprintf(binary_path, sizeof(binary_path),
+             "%s%s%s.exe", BUILD_DIR, PATH_SEP, test_name);
+#else
+    snprintf(binary_path, sizeof(binary_path),
+             "%s%s%s", BUILD_DIR, PATH_SEP, test_name);
+#endif
+
+    snprintf(runner_path, sizeof(runner_path),
+             "%s%s__runner_%s.c", BUILD_DIR, PATH_SEP, test_name);
+
+    FILE *runner = fopen(runner_path, "w");
+    if (!runner)
+    {
+        printf("❌ Failed to create runner for %s\n", filename);
+        return;
+    }
+
+    fprintf(runner, "#include \"../%s\"\n\n", source_path);
+
+    char functions[100][256];
+    int test_count = extract_test_functions(source_path, runner, functions);
+
+    if (test_count == 0)
+    {
+        printf("⚠️ No test_ functions found in %s\n\n", filename);
+        fclose(runner);
+        remove(runner_path);
+        return;
+    }
+
+    fprintf(runner, "\nint main() {\n");
+    fprintf(runner, "    printf(\"Running %d tests...\\n\");\n", test_count);
+
+    for (int i = 0; i < test_count; i++)
+    {
+        fprintf(runner, "    printf(\"→ %s\\n\");\n", functions[i]);
+        fprintf(runner, "    %s();\n", functions[i]);
+    }
+
+    fprintf(runner, "    return 0;\n}\n");
+    fclose(runner);
+
+    printf("🔨 Compiling %s...\n", filename);
+
+    int needed = snprintf(NULL, 0,
+                          "%s %s \"%s\" -o \"%s\"",
+                          COMPILER, CFLAGS, runner_path, binary_path);
+
+    if (needed < 0)
+    {
+        printf("❌ Failed to build compile command\n\n");
+        remove(runner_path);
+        return;
+    }
+
+    char *compile_cmd = malloc((size_t)needed + 1);
+    if (!compile_cmd)
+    {
+        printf("❌ Memory allocation failed\n\n");
+        remove(runner_path);
+        return;
+    }
+
+    snprintf(compile_cmd, (size_t)needed + 1,
+             "%s %s \"%s\" -o \"%s\"",
+             COMPILER, CFLAGS, runner_path, binary_path);
+
+    int compile_result = system(compile_cmd);
+    free(compile_cmd);
+
+    if (compile_result != 0)
+    {
+        printf("❌ Compile failed: %s\n\n", filename);
+        remove(runner_path);
+        return;
+    }
+
+    printf("▶️ Running %s...\n", filename);
+
+    if (system(binary_path) == 0)
+    {
+        printf("✅ Passed: %s\n\n", filename);
+        (*passed)++;
+    }
+    else
+    {
+        printf("❌ Failed: %s\n\n", filename);
+    }
+
+    remove(runner_path);
+    remove(binary_path);
+}
+
 int main(int argc, char *argv[])
 {
     const char *dir_path = "./src";
 
     if (argc > 1)
         dir_path = argv[1];
+
+    ensure_build_dir();
+
+    int total = 0;
+    int passed = 0;
+
+    printf("🔎 Searching tests in %s\n\n", dir_path);
+
+#ifdef _WIN32
+
+    char search_path[512];
+    snprintf(search_path, sizeof(search_path),
+             "%s\\*.*", dir_path);
+
+    WIN32_FIND_DATA find_data;
+    HANDLE hFind = FindFirstFile(search_path, &find_data);
+
+    if (hFind == INVALID_HANDLE_VALUE)
+    {
+        perror("Failed to open directory");
+        return 1;
+    }
+
+    do
+    {
+        if (!(find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+        {
+            run_test_file(dir_path, find_data.cFileName, &total, &passed);
+        }
+    } while (FindNextFile(hFind, &find_data));
+
+    FindClose(hFind);
+
+#else
 
     DIR *dir = opendir(dir_path);
     if (!dir)
@@ -82,143 +244,16 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    ensure_build_dir();
-
     struct dirent *entry;
-    int total = 0;
-    int passed = 0;
-
-    printf("🔎 Searching tests in %s\n\n", dir_path);
 
     while ((entry = readdir(dir)) != NULL)
     {
-        if (!ends_with(entry->d_name, "_test.c"))
-            continue;
-
-        total++;
-
-        char source_path[512];
-        char binary_path[512];
-        char runner_path[512];
-
-        if (snprintf(source_path, sizeof(source_path), "%s/%s",
-                     dir_path, entry->d_name) >= sizeof(source_path))
-        {
-            printf("❌ Path too long\n");
-            continue;
-        }
-
-        char test_name[256];
-        size_t name_len = strlen(entry->d_name);
-
-        if (name_len <= 2 || name_len - 2 >= sizeof(test_name))
-        {
-            printf("❌ Invalid test name\n");
-            continue;
-        }
-
-        memcpy(test_name, entry->d_name, name_len - 2);
-        test_name[name_len - 2] = '\0';
-
-        if (snprintf(binary_path, sizeof(binary_path), "%s/%s",
-                     BUILD_DIR, test_name) >= sizeof(binary_path))
-        {
-            printf("❌ Binary path too long\n");
-            continue;
-        }
-
-        if (snprintf(runner_path, sizeof(runner_path), "%s/__runner_%s.c",
-                     BUILD_DIR, test_name) >= sizeof(runner_path))
-        {
-            printf("❌ Runner path too long\n");
-            continue;
-        }
-
-        FILE *runner = fopen(runner_path, "w");
-        if (!runner)
-        {
-            printf("❌ Failed to create runner for %s\n", entry->d_name);
-            continue;
-        }
-
-        fprintf(runner, "#include \"../%s\"\n\n", source_path);
-
-        char functions[100][256];
-        int test_count = extract_test_functions(source_path, runner, functions);
-
-        if (test_count == 0)
-        {
-            printf("⚠️ No test_ functions found in %s\n\n", entry->d_name);
-            fclose(runner);
-            continue;
-        }
-
-        fprintf(runner, "\nint main() {\n");
-        fprintf(runner, "    printf(\"Running %d tests...\\n\");\n", test_count);
-
-        for (int i = 0; i < test_count; i++)
-        {
-            fprintf(runner, "    printf(\"→ %s\\n\");\n", functions[i]);
-            fprintf(runner, "    %s();\n", functions[i]);
-        }
-
-        fprintf(runner, "    return 0;\n");
-        fprintf(runner, "}\n");
-
-        fclose(runner);
-
-        printf("🔨 Compiling %s...\n", entry->d_name);
-
-        int needed = snprintf(NULL, 0,
-                              "%s %s %s -o %s",
-                              COMPILER, CFLAGS, runner_path, binary_path);
-
-        if (needed < 0)
-        {
-            printf("❌ Failed to calculate compile command size\n");
-            continue;
-        }
-
-        char *compile_cmd = malloc(needed + 1);
-        if (!compile_cmd)
-        {
-            printf("❌ Memory allocation failed\n");
-            continue;
-        }
-
-        snprintf(compile_cmd, needed + 1,
-                 "%s %s %s -o %s",
-                 COMPILER, CFLAGS, runner_path, binary_path);
-
-        if (system(compile_cmd) != 0)
-        {
-            printf("❌ Compile failed: %s\n\n", entry->d_name);
-            free(compile_cmd);
-            continue;
-        }
-
-        free(compile_cmd);
-
-        printf("▶️ Running %s...\n", entry->d_name);
-
-        if (system(binary_path) == 0)
-        {
-            printf("✅ Passed: %s\n\n", entry->d_name);
-            passed++;
-        }
-        else
-        {
-            printf("❌ Failed: %s\n\n", entry->d_name);
-        }
-
-        if (remove(runner_path) != 0)
-            perror("Failed to remove runner");
-
-        if (remove(binary_path) != 0)
-            perror("Failed to remove binary");
+        run_test_file(dir_path, entry->d_name, &total, &passed);
     }
 
     closedir(dir);
+
+#endif
 
     printf("====================================\n");
     printf("Tests: %d | Passed: %d | Failed: %d\n",
