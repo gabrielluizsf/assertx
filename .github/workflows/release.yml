@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Linux (static)
+      # ---------------- Linux ----------------
       - name: Build Linux (static)
         if: runner.os == 'Linux'
         run: |
@@ -38,31 +38,33 @@ jobs:
           clang assertx.c -O2 -static -s -o assertx
           chmod +x assertx
 
-      # Windows
+      # ---------------- Windows ----------------
       - name: Build Windows
         if: runner.os == 'Windows'
         shell: bash
         run: |
           clang assertx.c -O2 -s -o assertx.exe
 
-      # macOS
+      # ---------------- macOS ----------------
       - name: Build macOS
         if: runner.os == 'macOS'
         run: |
           clang assertx.c -O2 -s -o assertx
           chmod +x assertx
 
+      # ---------------- Package ----------------
       - name: Package binary
+        shell: bash
         run: |
-          mkdir dist
-          mv ${{ matrix.binary }} dist/
+          mkdir -p dist
+          mv "${{ matrix.binary }}" dist/
 
           cd dist
 
-          if [[ "${{ matrix.platform }}" == "windows" ]]; then
-            zip assertx-${{ matrix.platform }}.zip ${{ matrix.binary }}
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            zip "assertx-${{ matrix.platform }}.zip" "${{ matrix.binary }}"
           else
-            tar -czf assertx-${{ matrix.platform }}.tar.gz ${{ matrix.binary }}
+            tar -czf "assertx-${{ matrix.platform }}.tar.gz" "${{ matrix.binary }}"
           fi
 
       - uses: actions/upload-artifact@v4
@@ -83,8 +85,10 @@ jobs:
         with:
           path: artifacts
 
+      # ---------------- Versioning ----------------
       - name: Determine next version
         id: version
+        shell: bash
         run: |
           git fetch --tags
           latest_tag=$(git tag --sort=-v:refname | head -n 1)
@@ -98,6 +102,11 @@ jobs:
           IFS='.' read -r major minor patch <<< "$version"
 
           commits=$(git log ${latest_tag}..HEAD --pretty=format:"%s")
+
+          if [ -z "$commits" ]; then
+            echo "new_tag=$latest_tag" >> $GITHUB_OUTPUT
+            exit 0
+          fi
 
           bump="patch"
 
@@ -123,8 +132,10 @@ jobs:
           new_tag="v$major.$minor.$patch"
           echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
 
+      # ---------------- Changelog ----------------
       - name: Generate changelog
         id: changelog
+        shell: bash
         run: |
           latest_tag=$(git tag --sort=-v:refname | head -n 1)
 
@@ -138,6 +149,7 @@ jobs:
           echo "$log" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      # ---------------- Collect files ----------------
       - name: Prepare release files
         run: |
           mkdir release
@@ -145,15 +157,6 @@ jobs:
           cp artifacts/windows/* release/
           cp artifacts/macos/* release/
 
+      # ---------------- Release ----------------
       - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.new_tag }}
-          name: Release ${{ steps.version.outputs.new_tag }}
-          body: |
-            ## 🚀 Changes
-            ${{ steps.changelog.outputs.changelog }}
-          files: release/*
-          overwrite_files: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: so
