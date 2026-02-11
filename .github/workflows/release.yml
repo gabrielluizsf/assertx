@@ -15,88 +15,145 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact_name: assertx-linux
-            binary_name: assertx
+            platform: linux
+            binary: assertx
           - os: windows-latest
-            artifact_name: assertx-windows
-            binary_name: assertx.exe
+            platform: windows
+            binary: assertx.exe
           - os: macos-latest
-            artifact_name: assertx-macos
-            binary_name: assertx
+            platform: macos
+            binary: assertx
 
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # 🔹 Linux
-      - name: Build (Linux)
+      # Linux (static)
+      - name: Build Linux (static)
         if: runner.os == 'Linux'
         run: |
           sudo apt update
           sudo apt install -y clang
-          clang assertx.c -o ${{ matrix.binary_name }}
-          chmod +x ${{ matrix.binary_name }}
+          clang assertx.c -O2 -static -s -o assertx
+          chmod +x assertx
 
-      # 🔹 Windows
-      - name: Build (Windows)
+      # Windows
+      - name: Build Windows
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          clang assertx.c -o ${{ matrix.binary_name }}
+          clang assertx.c -O2 -s -o assertx.exe
 
-      # 🔹 macOS
-      - name: Build (macOS)
+      # macOS
+      - name: Build macOS
         if: runner.os == 'macOS'
         run: |
-          clang assertx.c -o ${{ matrix.binary_name }}
-          chmod +x ${{ matrix.binary_name }}
+          clang assertx.c -O2 -s -o assertx
+          chmod +x assertx
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Package binary
+        run: |
+          mkdir dist
+          mv ${{ matrix.binary }} dist/
+
+          cd dist
+
+          if [[ "${{ matrix.platform }}" == "windows" ]]; then
+            zip assertx-${{ matrix.platform }}.zip ${{ matrix.binary }}
+          else
+            tar -czf assertx-${{ matrix.platform }}.tar.gz ${{ matrix.binary }}
+          fi
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.binary_name }}
+          name: ${{ matrix.platform }}
+          path: dist/*
 
   release:
     needs: build
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 
+          fetch-depth: 0
 
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Get latest tag and increment patch
-        id: get_tag
+      - name: Determine next version
+        id: version
         run: |
           git fetch --tags
           latest_tag=$(git tag --sort=-v:refname | head -n 1)
 
           if [ -z "$latest_tag" ]; then
-            new_tag="v1.0.0"
-          else
-            version=${latest_tag#v}
-            IFS='.' read -r major minor patch <<< "$version"
-            patch=$((patch + 1))
-            new_tag="v$major.$minor.$patch"
+            echo "new_tag=v1.0.0" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
+          version=${latest_tag#v}
+          IFS='.' read -r major minor patch <<< "$version"
+
+          commits=$(git log ${latest_tag}..HEAD --pretty=format:"%s")
+
+          bump="patch"
+
+          if echo "$commits" | grep -q "BREAKING CHANGE"; then
+            bump="major"
+          elif echo "$commits" | grep -qE "^[^:]+!:"; then
+            bump="major"
+          elif echo "$commits" | grep -q "^feat"; then
+            bump="minor"
+          fi
+
+          if [ "$bump" = "major" ]; then
+            major=$((major + 1))
+            minor=0
+            patch=0
+          elif [ "$bump" = "minor" ]; then
+            minor=$((minor + 1))
+            patch=0
+          else
+            patch=$((patch + 1))
+          fi
+
+          new_tag="v$major.$minor.$patch"
           echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          latest_tag=$(git tag --sort=-v:refname | head -n 1)
+
+          if [ -z "$latest_tag" ]; then
+            log=$(git log --pretty=format:"- %s")
+          else
+            log=$(git log ${latest_tag}..HEAD --pretty=format:"- %s")
+          fi
+
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$log" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Prepare release files
+        run: |
+          mkdir release
+          cp artifacts/linux/* release/
+          cp artifacts/windows/* release/
+          cp artifacts/macos/* release/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.get_tag.outputs.new_tag }}
-          name: Release ${{ steps.get_tag.outputs.new_tag }}
-          target_commitish: ${{ github.sha }}
-          files: artifacts/**/*
+          tag_name: ${{ steps.version.outputs.new_tag }}
+          name: Release ${{ steps.version.outputs.new_tag }}
+          body: |
+            ## 🚀 Changes
+            ${{ steps.changelog.outputs.changelog }}
+          files: release/*
+          overwrite_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
