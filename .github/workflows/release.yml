@@ -58,11 +58,10 @@ jobs:
         run: |
           mkdir -p dist
           mv "${{ matrix.binary }}" dist/
-
           cd dist
 
           if [ "${{ matrix.platform }}" = "windows" ]; then
-            zip "assertx-${{ matrix.platform }}.zip" "${{ matrix.binary }}"
+            tar -a -c -f "assertx-${{ matrix.platform }}.zip" "${{ matrix.binary }}"
           else
             tar -czf "assertx-${{ matrix.platform }}.tar.gz" "${{ matrix.binary }}"
           fi
@@ -159,7 +158,7 @@ jobs:
 
       # ---------------- Release ----------------
       - name: Create Release
-        uses: softprops/action-gh-release@v2.0.8
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.new_tag }}
           name: Release ${{ steps.version.outputs.new_tag }}
@@ -170,4 +169,3 @@ jobs:
           overwrite_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
