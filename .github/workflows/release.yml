@@ -1,0 +1,110 @@
+name: Build and Release C Project (Multi-Platform)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: assertx-linux
+            binary_name: assertx
+          - os: windows-latest
+            artifact_name: assertx-windows
+            binary_name: assertx.exe
+          - os: macos-latest
+            artifact_name: assertx-macos
+            binary_name: assertx
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 🔹 Linux
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt update
+          sudo apt install -y clang
+          clang assertx.c -o ${{ matrix.binary_name }}
+          chmod +x ${{ matrix.binary_name }}
+
+      # 🔹 Windows
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          clang assertx.c -o ${{ matrix.binary_name }}
+
+      # 🔹 macOS
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          clang assertx.c -o ${{ matrix.binary_name }}
+          chmod +x ${{ matrix.binary_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.binary_name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get latest tag and increment patch
+        id: get_tag
+        run: |
+          git fetch --tags
+          latest_tag=$(git tag --sort=-v:refname | head -n 1)
+
+          if [ -z "$latest_tag" ]; then
+            new_tag="v1.0.0"
+          else
+            version=${latest_tag#v}
+            IFS='.' read -r major minor patch <<< "$version"
+            patch=$((patch + 1))
+            new_tag="v$major.$minor.$patch"
+          fi
+
+          echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
+
+      - name: Create Git Tag
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag ${{ steps.get_tag.outputs.new_tag }}
+          git push origin ${{ steps.get_tag.outputs.new_tag }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_tag.outputs.new_tag }}
+          name: Release ${{ steps.get_tag.outputs.new_tag }}
+          files: |
+            artifacts/assertx-linux/assertx
+            artifacts/assertx-windows/assertx.exe
+            artifacts/assertx-macos/assertx
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
