@@ -159,4 +159,15 @@ jobs:
 
       # ---------------- Release ----------------
       - name: Create Release
-        uses: so
+        uses: softprops/action-gh-release@v2.0.8
+        with:
+          tag_name: ${{ steps.version.outputs.new_tag }}
+          name: Release ${{ steps.version.outputs.new_tag }}
+          body: |
+            ## 🚀 Changes
+            ${{ steps.changelog.outputs.changelog }}
+          files: release/*
+          overwrite_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
