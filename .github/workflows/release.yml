@@ -87,7 +87,6 @@ jobs:
       # ---------------- Versioning ----------------
       - name: Determine next version
         id: version
-        shell: bash
         run: |
           git fetch --tags
           latest_tag=$(git tag --sort=-v:refname | head -n 1)
@@ -131,24 +130,7 @@ jobs:
           new_tag="v$major.$minor.$patch"
           echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
 
-      # ---------------- Changelog ----------------
-      - name: Generate changelog
-        id: changelog
-        shell: bash
-        run: |
-          latest_tag=$(git tag --sort=-v:refname | head -n 1)
-
-          if [ -z "$latest_tag" ]; then
-            log=$(git log --pretty=format:"- %s")
-          else
-            log=$(git log ${latest_tag}..HEAD --pretty=format:"- %s")
-          fi
-
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          echo "$log" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      # ---------------- Collect files ----------------
+      # ---------------- Prepare files ----------------
       - name: Prepare release files
         run: |
           mkdir release
@@ -156,16 +138,25 @@ jobs:
           cp artifacts/windows/* release/
           cp artifacts/macos/* release/
 
-      # ---------------- Release ----------------
-      - name: Create Release
+      # ---------------- Generate Checksums ----------------
+      - name: Generate SHA256 checksums
+        run: |
+          cd release
+          sha256sum * > checksums.txt
+
+      # ---------------- Create Release ----------------
+      - name: Create Versioned Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.new_tag }}
           name: Release ${{ steps.version.outputs.new_tag }}
-          body: |
-            ## 🚀 Changes
-            ${{ steps.changelog.outputs.changelog }}
           files: release/*
           overwrite_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ---------------- Update "latest" tag ----------------
+      - name: Update latest tag
+        run: |
+          git tag -f latest
+          git push origin latest --force
