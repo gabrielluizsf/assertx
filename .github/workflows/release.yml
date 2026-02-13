@@ -37,7 +37,7 @@ jobs:
           sudo apt install -y clang
           clang assertx.c -O2 -static -s -o assertx
           chmod +x assertx
-          assertx ./tests
+          ./assertx ./tests
 
       # ---------------- Windows ----------------
       - name: Build Windows
@@ -53,7 +53,7 @@ jobs:
         run: |
           clang assertx.c -O2 -s -o assertx
           chmod +x assertx
-          assertx ./tests
+          ./assertx ./tests
 
       # ---------------- Package ----------------
       - name: Package binary
@@ -92,10 +92,12 @@ jobs:
         id: version
         run: |
           git fetch --tags
-          latest_tag=$(git tag --sort=-v:refname | head -n 1)
+
+          latest_tag=$(git tag --sort=-v:refname | grep '^v' | head -n 1)
 
           if [ -z "$latest_tag" ]; then
             echo "new_tag=v1.0.0" >> $GITHUB_OUTPUT
+            echo "skip=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
@@ -106,16 +108,25 @@ jobs:
 
           if [ -z "$commits" ]; then
             echo "new_tag=$latest_tag" >> $GITHUB_OUTPUT
+            echo "skip=true" >> $GITHUB_OUTPUT
             exit 0
           fi
 
           bump="patch"
 
-          if echo "$commits" | grep -q "BREAKING CHANGE"; then
+          # ci commits -> patch only
+          if echo "$commits" | grep -qE "^ci(\(.+\))?:"; then
+            bump="patch"
+
+          # breaking change -> major
+          elif echo "$commits" | grep -q "BREAKING CHANGE"; then
             bump="major"
-          elif echo "$commits" | grep -qE "^[^:]+!:"; then
+
+          elif echo "$commits" | grep -qE "^[a-zA-Z]+(\(.+\))?!:"; then
             bump="major"
-          elif echo "$commits" | grep -q "^feat"; then
+
+          # feature -> minor
+          elif echo "$commits" | grep -qE "^feat(\(.+\))?:"; then
             bump="minor"
           fi
 
@@ -131,10 +142,13 @@ jobs:
           fi
 
           new_tag="v$major.$minor.$patch"
+
           echo "new_tag=$new_tag" >> $GITHUB_OUTPUT
+          echo "skip=false" >> $GITHUB_OUTPUT
 
       # ---------------- Prepare files ----------------
       - name: Prepare release files
+        if: steps.version.outputs.skip != 'true'
         run: |
           mkdir release
           cp artifacts/linux/* release/
@@ -143,12 +157,14 @@ jobs:
 
       # ---------------- Generate Checksums ----------------
       - name: Generate SHA256 checksums
+        if: steps.version.outputs.skip != 'true'
         run: |
           cd release
           sha256sum * > checksums.txt
 
       # ---------------- Create Release ----------------
       - name: Create Versioned Release
+        if: steps.version.outputs.skip != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.new_tag }}
@@ -158,8 +174,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ---------------- Update "latest" tag ----------------
+      # ---------------- Update latest tag ----------------
       - name: Update latest tag
+        if: steps.version.outputs.skip != 'true'
         run: |
           git tag -f latest
           git push origin latest --force
