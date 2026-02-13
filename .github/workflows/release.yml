@@ -37,6 +37,7 @@ jobs:
           sudo apt install -y clang
           clang assertx.c -O2 -static -s -o assertx
           chmod +x assertx
+          assertx ./tests
 
       # ---------------- Windows ----------------
       - name: Build Windows
@@ -44,6 +45,7 @@ jobs:
         shell: bash
         run: |
           clang assertx.c -O2 -s -o assertx.exe
+          ./assertx.exe ./tests
 
       # ---------------- macOS ----------------
       - name: Build macOS
@@ -51,6 +53,7 @@ jobs:
         run: |
           clang assertx.c -O2 -s -o assertx
           chmod +x assertx
+          assertx ./tests
 
       # ---------------- Package ----------------
       - name: Package binary
