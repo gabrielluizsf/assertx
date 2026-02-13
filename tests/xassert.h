@@ -47,22 +47,26 @@ static inline int __eq_ptr(void *a, void *b) { return a == b; }
    Macro inteligente
    =============================== */
 
-#define assert_equal(a, b, message)                                      \
-    assertx(                                                              \
-        _Generic((a),                                                     \
-            int: __eq_int,                                                \
-            long: __eq_long,                                              \
-            float: __eq_float,                                            \
-            double: __eq_double,                                          \
-            char: __eq_char,                                              \
-            const char *: __eq_string,                                    \
-            char *: __eq_string,                                          \
-            default: __eq_ptr)(a, b),                                     \
+#define assert_equal(a, b, message)    \
+    assertx(                           \
+        _Generic((a),                  \
+            int: __eq_int,             \
+            long: __eq_long,           \
+            float: __eq_float,         \
+            double: __eq_double,       \
+            char: __eq_char,           \
+            const char *: __eq_string, \
+            char *: __eq_string,       \
+            default: __eq_ptr)(a, b),  \
         message)
 
 /* =============================== */
 
 #define assert_null(v, message) assertx((v) == NULL, message)
+
+void assert_true(bool condition, string message) { assertx(condition, message); }
+
+void assert_false(bool condition, string message) { assertx(!condition, message); }
 
 void test_summary()
 {

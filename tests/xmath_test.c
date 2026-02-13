@@ -8,7 +8,13 @@ void test_sum()
     return;
 }
 
-void test_div() 
+void test_div()
 {
     assert_equal(xdiv(10, 0), -1, "10/0 should be -1");
+}
+
+void test_is_even()
+{
+    assert_true(is_even(4), "4 is even");
+    assert_false(is_even(5), "5 is odd");
 }
