@@ -3,14 +3,26 @@
 #include <string.h>
 
 #ifdef _WIN32
-    #include <windows.h>
-    #include <direct.h>
-    #define mkdir(path, mode) _mkdir(path)
-    #define PATH_SEP "\\"
+#include <windows.h>
+#include <direct.h>
+
+#define mkdir(path, mode) _mkdir(path)
+#define PATH_SEP "\\"
+
+#define fopen_safe(fp, path, mode) fopen_s(&(fp), path, mode)
+#define sscanf_safe sscanf_s
+#define strncpy_safe(dest, destsz, src) strncpy_s(dest, destsz, src, _TRUNCATE)
+
 #else
-    #include <dirent.h>
-    #include <sys/stat.h>
-    #define PATH_SEP "/"
+#include <dirent.h>
+#include <sys/stat.h>
+
+#define PATH_SEP "/"
+
+#define fopen_safe(fp, path, mode) ((fp) = fopen(path, mode)) == NULL
+#define sscanf_safe sscanf
+#define strncpy_safe(dest, destsz, src) strncpy(dest, src, destsz)
+
 #endif
 
 #define BUILD_DIR "build"
@@ -42,14 +54,11 @@ void ensure_build_dir()
 #endif
 }
 
-/*
- * Extracts functions:
- * void test_xxx()
- */
 int extract_test_functions(const char *source_path, FILE *runner_file, char functions[][256])
 {
-    FILE *src = fopen(source_path, "r");
-    if (!src)
+    FILE *src;
+
+    if (fopen_safe(src, source_path, "r"))
         return 0;
 
     char line[512];
@@ -59,15 +68,24 @@ int extract_test_functions(const char *source_path, FILE *runner_file, char func
     {
         if (strstr(line, "void test_") != NULL)
         {
-            char func_name[256];
-            if (sscanf(line, "void %255[^ (]", func_name) == 1)
+            char func_name[256] = {0};
+
+#ifdef _WIN32
+            if (sscanf_safe(line, "void %255[^ (]", func_name, (unsigned)_countof(func_name)) == 1)
+#else
+            if (sscanf_safe(line, "void %255[^ (]", func_name) == 1)
+#endif
             {
                 if (count < 100)
                 {
-                    strncpy(functions[count], func_name, sizeof(functions[count]) - 1);
-                    functions[count][sizeof(functions[count]) - 1] = '\0';
+                    strncpy_safe(functions[count], sizeof(functions[count]), func_name);
 
-                    fprintf(runner_file, "void %s();\n", func_name);
+#ifndef _WIN32
+                    functions[count][sizeof(functions[count]) - 1] = '\0';
+#endif
+
+                    fprintf(runner_file, "void %s();\n", functions[count]);
+
                     count++;
                 }
             }
@@ -75,6 +93,7 @@ int extract_test_functions(const char *source_path, FILE *runner_file, char func
     }
 
     fclose(src);
+
     return count;
 }
 
@@ -113,8 +132,9 @@ void run_test_file(const char *dir_path, const char *filename,
     snprintf(runner_path, sizeof(runner_path),
              "%s%s__runner_%s.c", BUILD_DIR, PATH_SEP, test_name);
 
-    FILE *runner = fopen(runner_path, "w");
-    if (!runner)
+    FILE *runner;
+
+    if (fopen_safe(runner, runner_path, "w"))
     {
         printf("❌ Failed to create runner for %s\n", filename);
         return;
@@ -123,13 +143,16 @@ void run_test_file(const char *dir_path, const char *filename,
     fprintf(runner, "#include \"../%s\"\n\n", source_path);
 
     char functions[100][256];
+
     int test_count = extract_test_functions(source_path, runner, functions);
 
     if (test_count == 0)
     {
         printf("⚠️ No test_ functions found in %s\n\n", filename);
+
         fclose(runner);
         remove(runner_path);
+
         return;
     }
 
@@ -143,6 +166,7 @@ void run_test_file(const char *dir_path, const char *filename,
     }
 
     fprintf(runner, "    return 0;\n}\n");
+
     fclose(runner);
 
     printf("🔨 Compiling %s...\n", filename);
@@ -159,6 +183,7 @@ void run_test_file(const char *dir_path, const char *filename,
     }
 
     char *compile_cmd = malloc((size_t)needed + 1);
+
     if (!compile_cmd)
     {
         printf("❌ Memory allocation failed\n\n");
@@ -171,6 +196,7 @@ void run_test_file(const char *dir_path, const char *filename,
              COMPILER, CFLAGS, runner_path, binary_path);
 
     int compile_result = system(compile_cmd);
+
     free(compile_cmd);
 
     if (compile_result != 0)
@@ -213,10 +239,12 @@ int main(int argc, char *argv[])
 #ifdef _WIN32
 
     char search_path[512];
+
     snprintf(search_path, sizeof(search_path),
              "%s\\*.*", dir_path);
 
     WIN32_FIND_DATA find_data;
+
     HANDLE hFind = FindFirstFile(search_path, &find_data);
 
     if (hFind == INVALID_HANDLE_VALUE)
@@ -231,6 +259,7 @@ int main(int argc, char *argv[])
         {
             run_test_file(dir_path, find_data.cFileName, &total, &passed);
         }
+
     } while (FindNextFile(hFind, &find_data));
 
     FindClose(hFind);
@@ -238,6 +267,7 @@ int main(int argc, char *argv[])
 #else
 
     DIR *dir = opendir(dir_path);
+
     if (!dir)
     {
         perror("Failed to open directory");
