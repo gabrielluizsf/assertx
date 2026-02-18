@@ -11,6 +11,8 @@ permissions:
 
 jobs:
   build:
+    runs-on: ${{ matrix.os }}
+
     strategy:
       matrix:
         include:
@@ -23,8 +25,6 @@ jobs:
           - os: macos-latest
             platform: macos
             binary: assertx
-
-    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
@@ -114,20 +114,19 @@ jobs:
 
           bump="patch"
 
-          # ci commits -> patch only
-          if echo "$commits" | grep -qE "^ci(\(.+\))?:"; then
-            bump="patch"
-
           # breaking change -> major
-          elif echo "$commits" | grep -q "BREAKING CHANGE"; then
+          if echo "$commits" | grep -q "BREAKING CHANGE"; then
             bump="major"
-
           elif echo "$commits" | grep -qE "^[a-zA-Z]+(\(.+\))?!:"; then
             bump="major"
 
           # feature -> minor
           elif echo "$commits" | grep -qE "^feat(\(.+\))?:"; then
             bump="minor"
+
+          # ci or docs -> patch
+          elif echo "$commits" | grep -qE "^(ci|docs)(\(.+\))?:"; then
+            bump="patch"
           fi
 
           if [ "$bump" = "major" ]; then
