@@ -5,10 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define bool int
+#include <stdbool.h>
 #define string const char *
-#define true 1
-#define false 0
 
 static int __test_failures = 0;
 static int __test_assertions = 0;
