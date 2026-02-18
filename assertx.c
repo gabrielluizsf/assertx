@@ -29,6 +29,38 @@
 #define COMPILER "gcc"
 #define CFLAGS "-Wall -Wextra -g"
 
+
+/* =========================
+   HELP / COPYRIGHT
+========================= */
+
+void show_help(const char *program)
+{
+    printf("\n");
+    printf("assertx - C Test Runner\n");
+    printf("Copyright (c) Gabriel Luiz\n");
+    printf("https://github.com/gabrielluizsf\n");
+    printf("\n");
+
+    printf("Usage:\n");
+    printf("  %s <test_directory>\n", program);
+    printf("\n");
+
+    printf("Example:\n");
+    printf("  %s ./tests\n", program);
+    printf("\n");
+
+    printf("Description:\n");
+    printf("  Automatically finds and runs all *_test.c files\n");
+    printf("  inside the specified directory.\n");
+    printf("\n");
+}
+
+
+/* =========================
+   UTILS
+========================= */
+
 int ends_with(const char *str, const char *suffix)
 {
     if (!str || !suffix)
@@ -53,6 +85,11 @@ void ensure_build_dir()
         mkdir(BUILD_DIR, 0700);
 #endif
 }
+
+
+/* =========================
+   EXTRACT TEST FUNCTIONS
+========================= */
 
 int extract_test_functions(const char *source_path, FILE *runner_file, char functions[][256])
 {
@@ -96,6 +133,11 @@ int extract_test_functions(const char *source_path, FILE *runner_file, char func
 
     return count;
 }
+
+
+/* =========================
+   RUN TEST FILE
+========================= */
 
 void run_test_file(const char *dir_path, const char *filename,
                    int *total, int *passed)
@@ -166,8 +208,8 @@ void run_test_file(const char *dir_path, const char *filename,
     }
 
     fprintf(runner, "    test_summary();\n");
+    fprintf(runner, "    return 0;\n");
     fprintf(runner, "}\n");
-
 
     fclose(runner);
 
@@ -176,13 +218,6 @@ void run_test_file(const char *dir_path, const char *filename,
     int needed = snprintf(NULL, 0,
                           "%s %s \"%s\" -o \"%s\"",
                           COMPILER, CFLAGS, runner_path, binary_path);
-
-    if (needed < 0)
-    {
-        printf("❌ Failed to build compile command\n\n");
-        remove(runner_path);
-        return;
-    }
 
     char *compile_cmd = malloc((size_t)needed + 1);
 
@@ -224,12 +259,21 @@ void run_test_file(const char *dir_path, const char *filename,
     remove(binary_path);
 }
 
+
+/* =========================
+   MAIN
+========================= */
+
 int main(int argc, char *argv[])
 {
-    const char *dir_path = "./src";
+    /* SHOW HELP IF NO PARAMETER */
+    if (argc < 2)
+    {
+        show_help(argv[0]);
+        return 0;
+    }
 
-    if (argc > 1)
-        dir_path = argv[1];
+    const char *dir_path = argv[1];
 
     ensure_build_dir();
 
