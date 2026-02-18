@@ -126,10 +126,10 @@ assertx
 
 Place `assertx-windows.zip` in your current folder.
 
-Open **PowerShell as Administrator** and run:
+Open **PowerShell** and run:
 
 ```powershell
-Expand-Archive assertx-windows.zip $env:TEMP\assertx -Force; mkdir "$env:ProgramFiles\AssertX" -Force; move "$env:TEMP\assertx\assertx.exe" "$env:ProgramFiles\AssertX\" -Force; $p=[Environment]::GetEnvironmentVariable("Path","Machine"); if($p -notlike "*AssertX*"){[Environment]::SetEnvironmentVariable("Path","$p;$env:ProgramFiles\AssertX","Machine")}
+$log="$PWD\assertx_install.log";$z="$PWD\assertx-windows.zip";$d="$env:LOCALAPPDATA\AssertX";"=== AssertX Install $(Get-Date) ==="|Out-File $log -Append;try{if(!(Test-Path $z)){throw "ZIP não encontrado"};ni $d -it Directory -f|Out-Null;tar -xf $z -C $d 2>>$log;if(!(Test-Path "$d\assertx.exe")){throw "assertx.exe não encontrado"};$p=[Environment]::GetEnvironmentVariable("Path","User");if($p-notlike"*AssertX*"){[Environment]::SetEnvironmentVariable("Path","$p;$d","User")};"SUCCESS instalado"|Out-File $log -Append;Write-Host "✅ AssertX instalado"}catch{("ERROR: "+$_.Exception.Message)|Out-File $log -Append}
 ```
 
 This command will:
