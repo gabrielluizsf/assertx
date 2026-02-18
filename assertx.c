@@ -165,7 +165,9 @@ void run_test_file(const char *dir_path, const char *filename,
         fprintf(runner, "    %s();\n", functions[i]);
     }
 
-    fprintf(runner, "    return 0;\n}\n");
+    fprintf(runner, "    test_summary();\n");
+    fprintf(runner, "}\n");
+
 
     fclose(runner);
 
