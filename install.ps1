@@ -1,71 +1,93 @@
 $ErrorActionPreference = "Stop"
 
+# ===== LANG =====
+$lang = $env:LANG
+if (-not $lang) { $lang = [System.Globalization.CultureInfo]::CurrentUICulture.Name }
+
+if ($lang -like "pt-BR*" -or $lang -like "pt-PT*") {
+    $L = "pt"
+} else {
+    $L = "en"
+}
+
+function Msg($key) {
+    switch ("$L`:$key") {
+        "pt:detect" { "🔍 Detectando sistema..." }
+        "en:detect" { "🔍 Detecting system..." }
+
+        "pt:fetch" { "📦 Buscando release..." }
+        "en:fetch" { "📦 Fetching release..." }
+
+        "pt:download" { "⬇️ Baixando..." }
+        "en:download" { "⬇️ Downloading..." }
+
+        "pt:extract" { "📦 Extraindo..." }
+        "en:extract" { "📦 Extracting..." }
+
+        "pt:install" { "📁 Instalando em" }
+        "en:install" { "📁 Installing to" }
+
+        "pt:path" { "🔧 Adicionando ao PATH..." }
+        "en:path" { "🔧 Adding to PATH..." }
+
+        "pt:success" { "✅ Instalado com sucesso!" }
+        "en:success" { "✅ Installed successfully!" }
+
+        "pt:restart" { "⚠️ Reinicie o terminal" }
+        "en:restart" { "⚠️ Restart terminal" }
+
+        "pt:header" { "⬇️ Baixando xassert.h..." }
+        "en:header" { "⬇️ Downloading xassert.h..." }
+    }
+}
+
+Write-Host (Msg "detect")
+
 $repo = "gabrielluizsf/assertx"
 $api = "https://api.github.com/repos/$repo/releases/latest"
 
-Write-Host "🔍 Detectando sistema..."
-
-$arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "386" }
-$asset = "assertx-windows.zip"
-
 Write-Host "💻 Windows"
-Write-Host "🧠 ARCH: $arch"
+Write-Host "🧠 ARCH: amd64"
 
-# ===== PEGAR URL =====
-Write-Host "📦 Buscando release..."
+Write-Host (Msg "fetch")
 
 $json = Invoke-RestMethod -Uri $api
-$url = $json.assets | Where-Object { $_.name -eq $asset } | Select-Object -ExpandProperty browser_download_url
+$url = $json.assets | Where-Object { $_.name -eq "assertx-windows.zip" } | Select-Object -ExpandProperty browser_download_url
 
 if (-not $url) {
-    Write-Host "❌ Binário não encontrado"
+    Write-Host "❌ Binary not found"
     exit 1
 }
 
-# ===== DOWNLOAD =====
-$tmp = New-Item -ItemType Directory -Path ([System.IO.Path]::GetTempPath() + [System.Guid]::NewGuid())
+$tmp = New-Item -ItemType Directory -Path ([System.IO.Path]::GetTempPath() + [guid]::NewGuid())
 Set-Location $tmp
 
-Write-Host "⬇️ Baixando..."
-Invoke-WebRequest $url -OutFile $asset
+Write-Host (Msg "download")
+Invoke-WebRequest $url -OutFile "assertx-windows.zip"
 
-# ===== EXTRAIR =====
-Write-Host "📦 Extraindo..."
-Expand-Archive $asset -Force
+Write-Host (Msg "extract")
+Expand-Archive "assertx-windows.zip" -Force
 
-# ===== INSTALAÇÃO =====
 $installDir = "$env:LOCALAPPDATA\AssertX"
 
-Write-Host "📁 Instalando em $installDir"
+Write-Host (Msg "install") $installDir
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 
 Move-Item "assertx.exe" "$installDir\assertx.exe" -Force
 
-# ===== PATH =====
 $path = [Environment]::GetEnvironmentVariable("Path", "User")
 
 if ($path -notlike "*$installDir*") {
-    Write-Host "🔧 Adicionando ao PATH..."
+    Write-Host (Msg "path")
     [Environment]::SetEnvironmentVariable("Path", "$path;$installDir", "User")
 }
 
-# ===== BAIXAR xassert.h =====
-Write-Host "⬇️ Baixando xassert.h..."
-$originalDir = (Get-Location).Path
-Set-Location $PWD
+Write-Host (Msg "header")
+Invoke-WebRequest "https://raw.githubusercontent.com/$repo/main/tests/xassert.h" -OutFile "$PWD\xassert.h"
 
-Invoke-WebRequest "https://raw.githubusercontent.com/$repo/main/tests/xassert.h" -OutFile "$originalDir\xassert.h"
-
-# ===== FINAL =====
 Write-Host ""
-Write-Host "🧪 Testando..."
-
 if (Get-Command assertx -ErrorAction SilentlyContinue) {
-    Write-Host "✅ Instalado com sucesso!"
+    Write-Host (Msg "success")
 } else {
-    Write-Host "⚠️ Reinicie o terminal"
+    Write-Host (Msg "restart")
 }
-
-Write-Host ""
-Write-Host "📄 xassert.h salvo em: $originalDir"
-Write-Host "🎉 Pronto! Use: assertx ./tests"
