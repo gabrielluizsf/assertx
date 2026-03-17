@@ -49,12 +49,23 @@ if ($path -notlike "*$installDir*") {
     [Environment]::SetEnvironmentVariable("Path", "$path;$installDir", "User")
 }
 
-# ===== xassert.c =====
-Write-Host "⬇️ Baixando xassert.c..."
-Invoke-WebRequest "https://raw.githubusercontent.com/$repo/main/assertx.c" -OutFile "$PWD\xassert.c"
+# ===== BAIXAR xassert.h =====
+Write-Host "⬇️ Baixando xassert.h..."
+$originalDir = (Get-Location).Path
+Set-Location $PWD
+
+Invoke-WebRequest "https://raw.githubusercontent.com/$repo/main/tests/xassert.h" -OutFile "$originalDir\xassert.h"
 
 # ===== FINAL =====
 Write-Host ""
-Write-Host "✅ Instalado com sucesso!"
-Write-Host "⚠️ Reinicie o terminal"
-Write-Host "🎉 Use: assertx ./tests"
+Write-Host "🧪 Testando..."
+
+if (Get-Command assertx -ErrorAction SilentlyContinue) {
+    Write-Host "✅ Instalado com sucesso!"
+} else {
+    Write-Host "⚠️ Reinicie o terminal"
+}
+
+Write-Host ""
+Write-Host "📄 xassert.h salvo em: $originalDir"
+Write-Host "🎉 Pronto! Use: assertx ./tests"

@@ -64,6 +64,7 @@ fi
 
 # ===== DOWNLOAD =====
 echo "⬇️ Baixando..."
+ORIGINAL_DIR="$(pwd)"
 TMP_DIR="$(mktemp -d)"
 cd "$TMP_DIR"
 
@@ -82,9 +83,9 @@ else
     BIN_NAME="assertx"
 fi
 
-# ===== BAIXAR xassert.c =====
-echo "⬇️ Baixando xassert.c..."
-curl -fsSL "https://raw.githubusercontent.com/$REPO/main/assertx.c" -o xassert.c
+# ===== BAIXAR xassert.h =====
+echo "⬇️ Baixando xassert.h..."
+curl -fsSL "https://raw.githubusercontent.com/$REPO/main/tests/xassert.h" -o "$ORIGINAL_DIR/xassert.h"
 
 # ===== INSTALAÇÃO =====
 if [ "$PLATFORM" = "windows" ]; then
