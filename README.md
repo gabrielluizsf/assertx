@@ -4,6 +4,23 @@
 
 This guide explains how to install the **AssertX binary** on Linux, macOS, and Windows and make it accessible from anywhere via your system `PATH`.
 
+
+## ⚡ Quick Install
+
+Install AssertX instantly with one command:
+
+### 🐧 Linux / macOS
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gabrielluizsf/assertx/main/install.sh | sh
+```
+
+### 🪟 Windows (PowerShell)
+
+```sh
+irm https://raw.githubusercontent.com/gabrielluizsf/assertx/main/install.ps1 | iex
+```
+
 ---
 
 ## 📦 Download
