@@ -75,6 +75,7 @@ New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 
 Move-Item "assertx.exe" "$installDir\assertx.exe" -Force
 
+# ===== PATH =====
 $path = [Environment]::GetEnvironmentVariable("Path", "User")
 
 if ($path -notlike "*$installDir*") {
@@ -82,12 +83,28 @@ if ($path -notlike "*$installDir*") {
     [Environment]::SetEnvironmentVariable("Path", "$path;$installDir", "User")
 }
 
+# ===== HEADER (igual ao install.sh) =====
 Write-Host (Msg "header")
-Invoke-WebRequest "https://raw.githubusercontent.com/$repo/main/tests/xassert.h" -OutFile "$PWD\xassert.h"
+
+# cria ./tests sem erro se já existir
+$testsDir = Join-Path (Get-Location) "tests"
+New-Item -ItemType Directory -Force -Path $testsDir | Out-Null
+
+# salva dentro de tests/xassert.h
+$headerPath = Join-Path $testsDir "xassert.h"
+
+Invoke-WebRequest "https://raw.githubusercontent.com/$repo/main/tests/xassert.h" -OutFile $headerPath
 
 Write-Host ""
+Write-Host "📄 xassert.h → $headerPath"
+
+# ===== FINAL =====
 if (Get-Command assertx -ErrorAction SilentlyContinue) {
     Write-Host (Msg "success")
 } else {
     Write-Host (Msg "restart")
 }
+
+Write-Host ""
+Write-Host "🎉 Done! Use:"
+Write-Host "assertx ./tests"

@@ -126,7 +126,8 @@ fi
 
 # ===== DOWNLOAD =====
 msg download
-ORIGINAL_DIR="$(pwd)"
+mkdir -p tests
+ORIGINAL_DIR="$(pwd)/tests"
 TMP_DIR="$(mktemp -d)"
 cd "$TMP_DIR"
 
