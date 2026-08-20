@@ -33,19 +33,63 @@ void test_ends_with_null()
 }
 
 /* =========================
-   ensure_build_dir
+   the cache directory
 ========================= */
 
-void test_ensure_build_dir()
+void test_ensure_cache_dir()
 {
-    ensure_build_dir();
+    char tmp[ASSERTX_PATH_MAX];
+    char first[ASSERTX_PATH_MAX];
+
+    assert_true(ensure_cache_dir(".", NULL),
+                "cache directory should be created");
 
 #ifdef _WIN32
-    assert_true(_access(BUILD_DIR, 0) == 0,
-                "build directory should exist (windows)");
+    assert_true(_access(g_cache_dir, 0) == 0,
+                "cache directory should exist (windows)");
 #else
-    assert_true(access(BUILD_DIR, F_OK) == 0,
-                "build directory should exist (unix)");
+    assert_true(access(g_cache_dir, F_OK) == 0,
+                "cache directory should exist (unix)");
+#endif
+
+    temp_dir(tmp, sizeof(tmp));
+
+    assert_equal(strncmp(g_cache_dir, tmp, strlen(tmp)), 0,
+                 "cache should live in the system temporary directory");
+
+    strcpy(first, g_cache_dir);
+
+    /* Two projects that both have a foo_test.c must not share a binary. */
+    assert_true(ensure_cache_dir("./src", NULL),
+                "a second directory should get a cache too");
+
+    assert_false(strcmp(first, g_cache_dir) == 0,
+                 "two test directories should not share a cache");
+
+    /* And the same one has to come back to the same place, or nothing would
+       ever be found again and the cache would never hit. */
+    assert_true(ensure_cache_dir(".", NULL),
+                "the first directory should still work");
+
+    assert_equal(strcmp(first, g_cache_dir), 0,
+                 "the same test directory should get the same cache");
+}
+
+void test_cache_dir_override()
+{
+    assert_true(ensure_cache_dir(".", "assertx_cache_test"),
+                "--cache-dir should be used when it is given");
+
+    assert_equal(strncmp(g_cache_dir, "assertx_cache_test",
+                         strlen("assertx_cache_test")), 0,
+                 "the named directory should be where the cache goes");
+
+#ifdef _WIN32
+    _rmdir(g_cache_dir);
+    _rmdir("assertx_cache_test");
+#else
+    rmdir(g_cache_dir);
+    rmdir("assertx_cache_test");
 #endif
 }
 

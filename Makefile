@@ -7,6 +7,5 @@ test:
 		fi; \
 		exit 1; \
 	}
-	@mkdir -p build
 	@gcc ./assertx.c -o ./assertx
 	@./assertx ./tests

@@ -287,3 +287,83 @@ from anywhere in your system.
         ```sh
         assertx ./tests
         ```
+
+## Running tests
+
+```sh
+assertx ./tests
+```
+
+Compiling is nearly all of the time a run takes — the tests themselves are
+usually a few milliseconds — so assertx does two things about it.
+
+**It compiles in parallel.** Test files do not depend on each other, so they
+are built several at a time, one per processor by default.
+
+**It only rebuilds what changed.** Each test records what it was compiled
+from, and on the next run a test whose sources are all older than its binary
+is not compiled again. Editing one test rebuilds one test; editing a shared
+header rebuilds everything that includes it.
+
+On a suite of 20 files that each pull in a large header:
+
+| | before | after |
+|---|---|---|
+| first run | 18.2s | 10.8s |
+| nothing changed | 18.2s | 0.3s |
+| one test changed | 18.2s | 2.0s |
+| shared header changed | 18.2s | 10.2s |
+
+### Where the cache lives
+
+The compiled tests are what make the caching possible, and they are kept in
+the system temporary directory — not in a `build/` folder beside your sources:
+
+| OS | Directory |
+|---|---|
+| Linux | `$TMPDIR`, or `/tmp` |
+| macOS | `$TMPDIR` (the per user directory macOS cleans up) |
+| Windows | `%TMP%`, then `%TEMP%` — whatever `GetTempPath` returns |
+
+Nothing in there is worth keeping: all of it can be produced again from the
+test files. Every operating system already empties its own temporary directory,
+so the cache is cleared without anybody having to remember to do it, nothing is
+left behind in your project, and there is no `build/` to add to `.gitignore`.
+
+Each test directory gets its own subdirectory, named after the project and a
+hash of the directory's absolute path:
+
+```
+/tmp/assertx/myproject-3f2a1b9c/
+```
+
+so two projects that both have a `foo_test.c` never write over each other.
+Deleting that directory, or passing `--no-cache`, forces a full rebuild.
+
+Use `--cache-dir` if you would rather keep the cache somewhere else — a CI
+runner that caches a directory between builds is the usual reason:
+
+```sh
+assertx ./tests --cache-dir .assertx-cache
+```
+
+### Options
+
+```
+assertx <test_directory> [options]
+
+  -j <n>        compile up to n test files at once (default: one per processor)
+  --no-cache    rebuild everything, even what has not changed
+  --cc <name>   use this compiler instead of gcc
+  --cache-dir <path>
+                keep the cache here instead of in the system temporary directory
+  -h, --help    print this
+```
+
+Environment variables: `CC` (same as `--cc`), `ASSERTX_CFLAGS` (replaces the
+default `-Wall -Wextra -g`), `ASSERTX_JOBS` (same as `-j`),
+`ASSERTX_CACHE_DIR` (same as `--cache-dir`).
+
+> Parallel compilation is used on Linux, macOS and other Unix systems. On
+> Windows the compiles still run one after another; the caching works the
+> same everywhere.
