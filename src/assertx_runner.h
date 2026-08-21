@@ -340,7 +340,7 @@ static int make_dir_path(const char *path, int strict)
     if (strlen(path) >= sizeof(work))
         return 0;
 
-    strcpy(work, path);
+    strncpy_safe(work, sizeof(work), path);
 
     for (i = 1; work[i]; i++)
     {
@@ -1055,10 +1055,40 @@ static void run_jobs(test_job *jobs, int count, int *total, int *passed)
    SETTINGS
 ========================= */
 
+#ifdef _WIN32
+/* MSVC deprecates getenv. getenv_s replaces it by copying into a buffer of
+   the caller's, so there is nothing to free; `buf` has to outlive the
+   settings that end up pointing at it. NULL when the variable is not set, or
+   when its value is longer than the buffer. */
+static const char *env_value(const char *name, char *buf, size_t size)
+{
+    size_t len = 0;
+
+    if (getenv_s(&len, buf, size, name) != 0 || len == 0)
+        return NULL;
+
+    return buf;
+}
+
+#define ENV_VALUE(name, buf) env_value(name, buf, sizeof(buf))
+#else
+/* getenv already points into the environment, which lasts the whole run, so
+   the buffer is not needed and never named in the expansion. */
+#define ENV_VALUE(name, buf) getenv(name)
+#endif
+
 static assertx_settings default_settings(void)
 {
     assertx_settings s;
     const char *env;
+#ifdef _WIN32
+    /* One per variable that is kept: the settings hold the pointers for the
+       rest of the run. */
+    static char cc_buf[ASSERTX_PATH_MAX];
+    static char cflags_buf[ASSERTX_CMD_MAX];
+    static char cache_buf[ASSERTX_PATH_MAX];
+    static char jobs_buf[32];
+#endif
 
     s.compiler = DEFAULT_COMPILER;
     s.cflags = DEFAULT_CFLAGS;
@@ -1066,16 +1096,16 @@ static assertx_settings default_settings(void)
     s.parallel = processor_count();
     s.use_cache = 1;
 
-    env = getenv("CC");
+    env = ENV_VALUE("CC", cc_buf);
     if (env && *env) s.compiler = env;
 
-    env = getenv("ASSERTX_CFLAGS");
+    env = ENV_VALUE("ASSERTX_CFLAGS", cflags_buf);
     if (env && *env) s.cflags = env;
 
-    env = getenv("ASSERTX_CACHE_DIR");
+    env = ENV_VALUE("ASSERTX_CACHE_DIR", cache_buf);
     if (env && *env) s.cache_dir = env;
 
-    env = getenv("ASSERTX_JOBS");
+    env = ENV_VALUE("ASSERTX_JOBS", jobs_buf);
     if (env && *env)
     {
         int n = atoi(env);
@@ -1084,6 +1114,8 @@ static assertx_settings default_settings(void)
 
     return s;
 }
+
+#undef ENV_VALUE
 
 /* Returns 1 to carry on, 0 to stop (help was asked for, or an argument was
    not understood). */
