@@ -347,6 +347,28 @@ runner that caches a directory between builds is the usual reason:
 assertx ./tests --cache-dir .assertx-cache
 ```
 
+### Running only the tests that use some functions
+
+```sh
+assertx ./tests --uses sum div ml_lerp
+```
+
+runs only the `test_` functions that call `sum`, `div` or `ml_lerp`, and skips
+the rest. Calls made through other functions count too: if `render` calls
+`draw`, then `--uses draw` also runs the tests that call `render`, however
+long the chain is. It is followed through the test file and every header it
+pulls in with `#include "..."`.
+
+A name counts when it is written as a call, `draw(...)`. A variable that
+happens to be called `draw` does not pick a test, and neither does
+`s.draw()`, a comment or a string. A function that is only passed around by
+pointer, or only called from inside a macro, is not seen.
+
+Switching between filters does not recompile anything: the compiled test
+takes the list of tests to run when it starts, so `--uses sum` and
+`--uses div` use the same cached binary. A file with none of the tests asked
+for is not compiled at all.
+
 ### Options
 
 ```
@@ -357,6 +379,8 @@ assertx <test_directory> [options]
   --cc <name>   use this compiler instead of gcc
   --cache-dir <path>
                 keep the cache here instead of in the system temporary directory
+  --uses <function>...
+                run only the tests that call one of these functions
   -h, --help    print this
 ```
 

@@ -42,7 +42,17 @@ int main(int argc, char *argv[])
         return 1;
 
     printf("🔎 Searching tests in %s\n", dir_path);
-    printf("📦 Cache: %s\n\n", g_cache_dir);
+    printf("📦 Cache: %s\n", g_cache_dir);
+
+    if (settings.uses_count > 0)
+    {
+        printf("🎯 Only tests that use:");
+        for (i = 0; i < settings.uses_count; i++)
+            printf(" %s", settings.uses[i]);
+        printf("\n");
+    }
+
+    printf("\n");
 
     /* ---- pass one: find the tests and work out what has changed ---- */
 
@@ -65,16 +75,9 @@ int main(int argc, char *argv[])
         do
         {
             if (!(find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) &&
-                ends_with(find_data.cFileName, "_test.c") &&
-                job_count < MAX_TEST_FILES)
-            {
-                if (prepare_job(&jobs[job_count], dir_path, find_data.cFileName,
-                                &settings))
-                    job_count++;
-                else
-                    printf("⚠️ No test_ functions found in %s\n\n",
-                           find_data.cFileName);
-            }
+                ends_with(find_data.cFileName, "_test.c"))
+                collect_test_file(jobs, &job_count, dir_path,
+                                  find_data.cFileName, &settings);
 
         } while (FindNextFile(hFind, &find_data));
 
@@ -99,10 +102,7 @@ int main(int argc, char *argv[])
             if (job_count >= MAX_TEST_FILES)
                 break;
 
-            if (prepare_job(&jobs[job_count], dir_path, entry->d_name, &settings))
-                job_count++;
-            else
-                printf("⚠️ No test_ functions found in %s\n\n", entry->d_name);
+            collect_test_file(jobs, &job_count, dir_path, entry->d_name, &settings);
         }
 
         closedir(dir);
@@ -111,7 +111,10 @@ int main(int argc, char *argv[])
 
     if (job_count == 0)
     {
-        printf("No tests found in %s\n", dir_path);
+        if (settings.uses_count > 0)
+            printf("No test in %s uses any of these functions\n", dir_path);
+        else
+            printf("No tests found in %s\n", dir_path);
         return 0;
     }
 

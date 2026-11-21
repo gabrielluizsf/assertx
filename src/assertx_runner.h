@@ -28,6 +28,9 @@
 
 #endif
 
+#include "abs_path.h"
+#include "test_filter.h"
+
 #define DEFAULT_COMPILER "gcc"
 #define DEFAULT_CFLAGS "-Wall -Wextra -g"
 
@@ -55,6 +58,8 @@ typedef struct
     const char *cache_dir; /* NULL for the system temporary directory */
     int parallel;      /* how many compiles at once */
     int use_cache;     /* 0 with --no-cache         */
+    const char *uses[TEST_FILTER_MAX_NAMES]; /* --uses: run only the tests */
+    int uses_count;                          /* that call one of these     */
 } assertx_settings;
 
 
@@ -73,7 +78,15 @@ typedef struct
     int  needs_build;
     int  build_ok;
     int  cached;         /* the compile was skipped    */
+    int  filtered;       /* only some tests are run    */
+    int  selected_count;
+    unsigned char selected[MAX_TEST_FUNCS];  /* by --uses */
 } test_job;
+
+/* What prepare_job found. */
+#define PREPARE_NO_TESTS      0
+#define PREPARE_OK            1
+#define PREPARE_NONE_SELECTED 2   /* tests, but none that --uses asked for */
 
 
 /* =========================
@@ -95,6 +108,7 @@ void show_help(const char *program)
     printf("Example:\n");
     printf("  %s ./tests\n", program);
     printf("  %s ./tests -j 8\n", program);
+    printf("  %s ./tests --uses xsum xdiv\n", program);
     printf("\n");
 
     printf("Options:\n");
@@ -105,6 +119,9 @@ void show_help(const char *program)
     printf("  --cache-dir <path>\n");
     printf("                keep the cache here instead of in the system\n");
     printf("                temporary directory\n");
+    printf("  --uses <function>...\n");
+    printf("                run only the tests that call one of these\n");
+    printf("                functions\n");
     printf("  -h, --help    print this\n");
     printf("\n");
 
@@ -177,31 +194,6 @@ static int path_printf(char *out, size_t out_size, const char *fmt, ...)
     va_end(args);
 
     return n >= 0 && (size_t)n < out_size;
-}
-
-/* The absolute form of `path`, or 0 if it cannot be worked out. */
-static int absolute_path(const char *path, char *out, size_t out_size)
-{
-#ifdef _WIN32
-    DWORD n = GetFullPathNameA(path, (DWORD)out_size, out, NULL);
-
-    return n > 0 && (size_t)n < out_size;
-#else
-    char *resolved = realpath(path, NULL);
-
-    if (!resolved)
-        return 0;
-
-    if (strlen(resolved) >= out_size)
-    {
-        free(resolved);
-        return 0;
-    }
-
-    strcpy(out, resolved);
-    free(resolved);
-    return 1;
-#endif
 }
 
 /* The system temporary directory, without a trailing separator. */
@@ -546,12 +538,50 @@ static void escape_for_c_string(const char *in, char *out, size_t out_size)
    `include_path` is absolute: the runner no longer sits beside the tests, so
    there is no relative path from it that would keep working. A quoted include
    is resolved from the directory of the file holding it, so the test's own
-   #include "xassert.h" still finds the header next to the test. */
+   #include "xassert.h" still finds the header next to the test.
+
+   The runner takes the positions of the tests to run as its arguments, and
+   runs all of them when given none. That is how --uses picks tests without
+   the choice being compiled in: switching between --uses sum and --uses div
+   runs the same cached binary instead of building it again. Positions rather
+   than names, so nothing but digits ever reaches the command line. */
+static const char runner_selector[] =
+    "\nstatic int assertx_wanted_(int argc, char **argv, int index)\n"
+    "{\n"
+    "    int i;\n"
+    "\n"
+    "    if (argc < 2)\n"
+    "        return 1;\n"
+    "\n"
+    "    for (i = 1; i < argc; i++)\n"
+    "    {\n"
+    "        const char *p = argv[i];\n"
+    "        int n = 0;\n"
+    "\n"
+    "        if (*p == '\\0')\n"
+    "            continue;\n"
+    "\n"
+    "        while (*p >= '0' && *p <= '9' && n < 100000)\n"
+    "            n = n * 10 + (*p++ - '0');\n"
+    "\n"
+    "        if (*p == '\\0' && n == index)\n"
+    "            return 1;\n"
+    "    }\n"
+    "\n"
+    "    return 0;\n"
+    "}\n"
+    "\n"
+    "int main(int argc, char **argv)\n"
+    "{\n"
+    "    int i_;\n"
+    "    int count_ = 0;\n"
+    "\n";
+
 static int build_runner_source(const char *source_path, const char *include_path,
+                               char functions[][256],
                                char *out, size_t out_size, int *out_count)
 {
     char include[ASSERTX_PATH_MAX * 2];
-    char functions[MAX_TEST_FUNCS][256];
     int count;
     int i;
     size_t used = 0;
@@ -572,17 +602,23 @@ static int build_runner_source(const char *source_path, const char *include_path
         used += (size_t)snprintf(out + used, out_size - used,
                                  "void %s();\n", functions[i]);
 
+    used += (size_t)snprintf(out + used, out_size - used, "%s", runner_selector);
+
     used += (size_t)snprintf(out + used, out_size - used,
-                             "\nint main() {\n    printf(\"Running %d tests...\\n\");\n",
+                             "    for (i_ = 0; i_ < %d; i_++)\n"
+                             "        count_ += assertx_wanted_(argc, argv, i_);\n"
+                             "\n"
+                             "    printf(\"Running %%d tests...\\n\", count_);\n\n",
                              count);
 
     for (i = 0; i < count; i++)
-    {
         used += (size_t)snprintf(out + used, out_size - used,
-                                 "    printf(\"\u2192 %s\\n\");\n", functions[i]);
-        used += (size_t)snprintf(out + used, out_size - used,
-                                 "    %s();\n", functions[i]);
-    }
+                                 "    if (assertx_wanted_(argc, argv, %d))\n"
+                                 "    {\n"
+                                 "        printf(\"\u2192 %s\\n\");\n"
+                                 "        %s();\n"
+                                 "    }\n",
+                                 i, functions[i], functions[i]);
 
     used += (size_t)snprintf(out + used, out_size - used,
                              "    test_summary();\n    return 0;\n}\n");
@@ -767,12 +803,40 @@ static int sources_changed(const char *depfile, long long binary_time)
    COLLECTING THE WORK
 ========================= */
 
+/* Marks which of the file's tests --uses asked for. Returns how many. */
+static int select_job_tests(test_job *job, char functions[][256],
+                            const assertx_settings *settings)
+{
+    const char *funcs[MAX_TEST_FUNCS];
+    int picked;
+    int i;
+
+    for (i = 0; i < job->test_count; i++)
+        funcs[i] = functions[i];
+
+    picked = select_tests_calling(job->abs_source, job->incdir,
+                                  funcs, job->test_count,
+                                  settings->uses, settings->uses_count,
+                                  job->selected);
+
+    if (picked < 0)
+    {
+        printf("❌ Cannot read %s\n\n", job->source);
+        return 0;
+    }
+
+    job->selected_count = picked;
+    job->filtered = 1;
+    return picked;
+}
+
 /* Works out one test file's paths, writes its runner, and decides whether it
-   needs compiling. Returns 0 when the file holds no tests. */
+   needs compiling. Returns one of the PREPARE_ values. */
 static int prepare_job(test_job *job, const char *dir_path, const char *filename,
                        const assertx_settings *settings)
 {
     static char runner_source[256 * 1024];
+    static char functions[MAX_TEST_FUNCS][256];
     char test_name[256];
     size_t name_len = strlen(filename);
     long long binary_time;
@@ -819,9 +883,16 @@ static int prepare_job(test_job *job, const char *dir_path, const char *filename
         !path_printf(job->incdir, sizeof(job->incdir), "%s", dir_path))
         return 0;
 
-    if (!build_runner_source(job->source, job->abs_source, runner_source,
-                             sizeof(runner_source), &job->test_count))
-        return 0;
+    if (!build_runner_source(job->source, job->abs_source, functions,
+                             runner_source, sizeof(runner_source),
+                             &job->test_count))
+        return PREPARE_NO_TESTS;
+
+    /* Before the runner is written or anything is compiled: a file with none
+       of the tests asked for costs nothing. */
+    if (settings->uses_count > 0 &&
+        select_job_tests(job, functions, settings) == 0)
+        return PREPARE_NONE_SELECTED;
 
     if (!write_if_changed(job->runner, runner_source))
     {
@@ -836,7 +907,29 @@ static int prepare_job(test_job *job, const char *dir_path, const char *filename
     else
         job->needs_build = sources_changed(job->depfile, binary_time);
 
-    return 1;
+    return PREPARE_OK;
+}
+
+/* Prepares one test file and adds it to `jobs` if it has tests to run. */
+static void collect_test_file(test_job *jobs, int *job_count, const char *dir_path,
+                              const char *filename, const assertx_settings *settings)
+{
+    if (*job_count >= MAX_TEST_FILES)
+        return;
+
+    switch (prepare_job(&jobs[*job_count], dir_path, filename, settings))
+    {
+    case PREPARE_OK:
+        (*job_count)++;
+        break;
+
+    case PREPARE_NO_TESTS:
+        printf("⚠️ No test_ functions found in %s\n\n", filename);
+        break;
+
+    default:            /* none of its tests were asked for */
+        break;
+    }
 }
 
 
@@ -1013,7 +1106,8 @@ static void run_jobs(test_job *jobs, int count, int *total, int *passed)
     for (i = 0; i < count; i++)
     {
         test_job *job = &jobs[i];
-        char command[ASSERTX_PATH_MAX + 8];
+        char command[ASSERTX_CMD_MAX];
+        int partial = job->filtered && job->selected_count < job->test_count;
 
         (*total)++;
 
@@ -1025,18 +1119,41 @@ static void run_jobs(test_job *jobs, int count, int *total, int *passed)
             continue;
         }
 
-        printf("▶️ Running %s...%s\n", job->filename,
+        printf("▶️ Running %s...%s", job->filename,
                job->cached ? " (cached)" : "");
+
+        if (partial)
+            printf(" (%d of %d tests)", job->selected_count, job->test_count);
+
+        printf("\n");
 
         /* Quoted: the cache is under the system temporary directory, which on
            Windows goes through the account name and often has a space in it.
            cmd.exe strips the outer pair of quotes off the whole command, so
            the path it is meant to keep needs its own. */
+        /* The tests --uses picked go after it by position: digits only,
+           which no shell reads as anything else. At most MAX_TEST_FUNCS of
+           them, so they always fit. */
+        {
+            size_t used = (size_t)snprintf(command, sizeof(command), "\"%s\"",
+                                           job->binary);
+            int t;
+
+            for (t = 0; partial && t < job->test_count; t++)
+                if (job->selected[t] && used < sizeof(command))
+                    used += (size_t)snprintf(command + used,
+                                             sizeof(command) - used, " %d", t);
+
 #ifdef _WIN32
-        snprintf(command, sizeof(command), "\"\"%s\"\"", job->binary);
-#else
-        snprintf(command, sizeof(command), "\"%s\"", job->binary);
+            {
+                /* cmd.exe strips one outer pair of quotes from the whole line. */
+                char wrapped[ASSERTX_CMD_MAX + 2];
+
+                snprintf(wrapped, sizeof(wrapped), "\"%s\"", command);
+                snprintf(command, sizeof(command), "%s", wrapped);
+            }
 #endif
+        }
 
         if (system(command) == 0)
         {
@@ -1095,6 +1212,7 @@ static assertx_settings default_settings(void)
     s.cache_dir = NULL;
     s.parallel = processor_count();
     s.use_cache = 1;
+    s.uses_count = 0;
 
     env = ENV_VALUE("CC", cc_buf);
     if (env && *env) s.compiler = env;
@@ -1145,6 +1263,37 @@ static int parse_settings(int argc, char *argv[], assertx_settings *settings)
             if (++i >= argc) { printf("--cache-dir needs a path\n"); return 0; }
             settings->cache_dir = argv[i];
         }
+        else if (strcmp(argv[i], "--uses") == 0)
+        {
+            int before = settings->uses_count;
+
+            /* Every word up to the next option is a function name. */
+            while (i + 1 < argc && argv[i + 1][0] != '-')
+            {
+                const char *name = argv[++i];
+
+                if (!is_function_name(name))
+                {
+                    printf("--uses: \"%s\" is not a function name\n", name);
+                    return 0;
+                }
+
+                if (settings->uses_count >= TEST_FILTER_MAX_NAMES)
+                {
+                    printf("--uses takes at most %d functions\n",
+                           TEST_FILTER_MAX_NAMES);
+                    return 0;
+                }
+
+                settings->uses[settings->uses_count++] = name;
+            }
+
+            if (settings->uses_count == before)
+            {
+                printf("--uses needs at least one function name\n");
+                return 0;
+            }
+        }
         else
         {
             printf("Unknown option: %s\n", argv[i]);
@@ -1164,27 +1313,33 @@ static int parse_settings(int argc, char *argv[], assertx_settings *settings)
    no longer uses it — it batches the work instead — but it is the smallest
    unit of what assertx does, and it stays because it is worth being able to
    call and to test on its own. */
-void run_test_file(const char *dir_path, const char *filename,
-                   int *total, int *passed)
+void run_test_file_with(const char *dir_path, const char *filename,
+                        const assertx_settings *settings,
+                        int *total, int *passed)
 {
     static test_job job;
-    assertx_settings settings;
+    int count = 0;
 
     if (!ends_with(filename, "_test.c"))
         return;
 
-    settings = default_settings();
-    settings.parallel = 1;
-
-    if (!ensure_cache_dir(dir_path, settings.cache_dir))
+    if (!ensure_cache_dir(dir_path, settings->cache_dir))
         return;
 
-    if (!prepare_job(&job, dir_path, filename, &settings))
-    {
-        printf("⚠️ No test_ functions found in %s\n\n", filename);
-        return;
-    }
+    collect_test_file(&job, &count, dir_path, filename, settings);
 
-    build_all(&job, 1, &settings);
+    if (count == 0)
+        return;
+
+    build_all(&job, 1, settings);
     run_jobs(&job, 1, total, passed);
+}
+
+void run_test_file(const char *dir_path, const char *filename,
+                   int *total, int *passed)
+{
+    assertx_settings settings = default_settings();
+
+    settings.parallel = 1;
+    run_test_file_with(dir_path, filename, &settings, total, passed);
 }
